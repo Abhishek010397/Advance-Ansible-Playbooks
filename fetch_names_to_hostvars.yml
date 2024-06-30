@@ -1,0 +1,91 @@
+---
+- name: Extract Bucket Names
+  serial: 1
+  hosts: "{{ hosts }}"
+  gather_facts: false
+  vars:
+    cluster: "{{ CLUSTER_NAME }}"
+  tasks:
+    - name: Set hosts to loop over clustered environment
+      set_fact:
+        loop_hosts: "{{ cluster_nodes }}"
+      when: cluster
+
+    - name: Set hosts to loop over single node environment
+      set_fact:
+        loop_hosts: "['{{ inventory_hostname }}']"
+      when: not cluster
+
+    - name: Exec AWS Account
+      delegate_to: localhost
+      block:
+        - name: Get Bucket Names
+          command: >
+            aws-vault exec {{ AWS_ACCOUNT }} -- aws s3 ls
+          register: s3_bucket_names
+
+        - name: Extract Bucket Names
+          set_fact:
+            bucket_names: "{{ s3_bucket_names.stdout.split('\n') | map('regex_replace', '^[^ ]+ [^ ]+ ', '') | list }}"
+
+        - name: List Buckets Matching Conditions
+          set_fact:
+            matched_buckets: "{{ matched_buckets | default([]) + [item] }}"
+          loop: "{{ bucket_names }}"
+          when: "item.lower().startswith('{{ NAME | lower }}-') and '{{ NAME_ENV | lower }}' in item.lower()"
+
+        - name: Extract substring and filter buckets
+          set_fact:
+            filtered_buckets: "{{ filtered_buckets | default([]) + [item] }}"
+          loop: "{{ matched_buckets }}"
+          loop_control:
+            loop_var: item
+          vars:
+            get_random_id: "{{ item.split('-')[2] }}"
+          when: "get_random_id | regex_search('^(?=.*[a-zA-Z])(?=.*[0-9])[A-Za-z0-9]+$')"
+
+        - debug:
+            var: filtered_buckets
+
+        - name: Append bucket names to host_vars file
+          blockinfile:
+            path: "{{ inventory_dir }}/host_vars/{{item}}"
+            marker: "# {mark} GET BUCKETS | BUCKET_NAMES"
+            insertafter: EOF
+            block: |
+              S3:
+                BUCKET1:
+                  {% for bucket in filtered_buckets if 'abc' not in bucket and 'xyz' not in bucket and 'jkw' not in bucket -%}
+                  {% if 'ifw' in bucket and 'tyw' not in bucket and 'ctg' not in bucket -%}
+                  NAME: {{ bucket }}
+                  {% elif 'kjs' in bucket -%}
+                  NAME: {{ bucket }}
+                  {% elif 'lmo' in bucket -%}
+                  NAME: {{ bucket }}
+                  {%- endif -%}             
+                  {%- endfor -%}{{ "" }}
+                BUCKET2:
+                  {% for bucket in filtered_buckets if 'pqr' in bucket or 'rst' in bucket -%}
+                  {% if 'pqr' in bucket %}
+              NAME: {{ bucket }}
+                  {%- else %}
+              NAME: {{ bucket }}
+                  {% endif -%}
+                  {%- endfor -%}{{ "" }}
+                BUCKET3:
+                  {% for bucket in filtered_buckets if 'ijw' in bucket -%}
+                  NAME: {{ bucket }}
+                  {%- endfor -%}{{ "" }}
+                BUCKET4:
+                  {% if filtered_buckets | select('search', 'ytr') | list -%}
+                  {% for bucket in filtered_buckets if 'ytr' in bucket -%}
+                  NAME: {{ bucket }}
+                  {%- endfor -%}
+                  {%- else %}
+                  NAME: null
+                  {%- endif -%}{{ "" }}
+            state: present
+          loop: "{{ loop_hosts }}"
+
+
+

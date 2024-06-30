@@ -1,0 +1,93 @@
+---
+- name: Define Instance Profile Name
+  set_fact:
+    instance_profile_name: "{{ NAME | lower }}-{{ NAME_ENV | lower }}-s3-access"
+
+- name: Define Role Name
+  set_fact:
+    role_name: "{{ NAME | lower }}-{{ NAME_ENV | lower }}-s3-access"
+
+- name: List existing IAM Instance Profile in AWS Account
+  delegate_to: localhost
+  command: >
+    aws-vault exec {{ AWS_ACCOUNT }} -- aws iam list-instance-profiles
+  register: instance_profiles
+
+- name: Extract IAM Instance Profile Names in AWS Account
+  set_fact:
+   existing_instance_profile_names: "{{ instance_profiles.stdout | from_json | json_query('InstanceProfiles[*].InstanceProfileName') }}"
+
+- debug:
+    var: existing_instance_profile_names
+
+- name: Create Instance Profile if not exists
+  delegate_to: localhost
+  command: >
+    aws-vault exec {{ AWS_ACCOUNT }} -- aws iam create-instance-profile --instance-profile-name {{ instance_profile_name }}
+  when: instance_profile_name not in existing_instance_profile_names
+  register: instance_profile_creation_result
+
+- name: List existing IAM Roles in AWS Account
+  delegate_to: localhost
+  command: >
+    aws-vault exec {{ AWS_ACCOUNT }} -- aws iam list-roles
+  register: existing_roles
+
+- name: Extract Existing Role Names in AWS Account
+  set_fact:
+    existing_role_name: "{{ existing_roles.stdout | from_json | json_query('Roles[*].RoleName') }}"
+
+- name: Create a IAM Role if not exists
+  delegate_to: localhost
+  command: >
+    aws-vault exec {{ 'AWS_ACCOUNT }} -- aws iam create-role --role-name {{ instance_profile_name }} --assume-role-policy-document file:///opt/ansible/books/s3_migrations/templates/assume_role_policy.json
+  when: role_name not in existing_role_name
+  register: role_creation
+
+- name: Check if Instance Profile has a Role
+  delegate_to: localhost
+  command: >
+    aws-vault exec {{ 'AWS_ACCOUNT }} -- aws iam get-instance-profile --instance-profile-name {{ instance_profile_name }}
+  register: instance_profile_details
+
+- name: Extract Role Name from the Instance Profile
+  set_fact:
+    profile_role_attached: "{{ instance_profile_details.stdout | from_json | json_query('InstanceProfile.Roles[0].RoleName') }}"
+
+- debug:
+    var: profile_role_attached
+
+- name: Attach Role to Instance Profile
+  delegate_to: localhost
+  command: >
+    aws-vault exec {{ 'AWS_ACCOUNT }} -- aws iam add-role-to-instance-profile --role-name {{ role_name }} --instance-profile-name {{ instance_profile_name }}
+  when:  role_name not in profile_role_attached
+  register: attachment_result
+
+- name: Get Existing Policies Attached to the Role
+  delegate_to: localhost
+  command: >
+    aws-vault exec {{ 'AWS_ACCOUNT }} -- aws iam list-attached-role-policies --role-name {{ profile_role_attached }}
+  register: existing_policy_arns
+
+- name: Extract Policy Arns Attached to the Role
+  set_fact:
+    existing_policy_arn: "{{ existing_policy_arns.stdout | from_json | json_query('AttachedPolicies[*].PolicyArn') }}"
+
+- debug:
+    var: existing_policy_arn
+
+- name: Attach policies to Role if not present
+  delegate_to: localhost
+  command: >
+    aws-vault exec {{ 'AWS_ACCOUNT }} -- aws iam attach-role-policy --policy-arn {{ item }} --role-name {{ role_name }}
+  with_items: "{{ policy_arns }}"
+  when: item not in existing_policy_arn
+  register: policy_attachment_result
+
+- name: Attach Instance Profile to Instance
+  delegate_to: localhost
+  command: >
+    aws-vault exec {{ 'AWS_ACCOUNT }} -- aws ec2 associate-iam-instance-profile --instance-id {{ item }} --iam-instance-profile Name={{ instance_profile_name }}
+  with_items: "{{ instance_ids_without_profile }}"
+

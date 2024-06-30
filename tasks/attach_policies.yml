@@ -1,0 +1,28 @@
+---
+- name: Get And Set Role Name
+  set_fact:
+    role_name: "{{ item }}"
+
+- debug:
+    var: role_name
+
+- name: Get Existing Policies Attached to the Role
+  delegate_to: localhost
+  command: >
+    aws-vault exec {{ AWS_ACCOUNT }} -- aws iam list-attached-role-policies --role-name '{{ role_name }}'
+  register: existing_policies
+
+- name: Extract policy ARNs from Policies
+  set_fact:
+    attached_policy_arns: "{{ existing_policies.stdout | from_json | json_query('AttachedPolicies[*].PolicyArn') }}"
+
+- debug:
+    var: attached_policy_arns
+
+- name: Attach policies to IAM roles if not exists
+  delegate_to: localhost
+  command: >
+    aws-vault exec {{ AWS_ACCOUNT }} -- aws iam attach-role-policy --policy-arn {{ item }} --role-name {{ role_name }}
+  with_items: "{{ policy_arns }}"
+  when: item not in attached_policy_arns
+  register: policy_attachment_result

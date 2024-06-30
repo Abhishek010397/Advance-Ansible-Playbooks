@@ -1,0 +1,118 @@
+---
+- name: Create Attach Instance Profiles
+  serial: 1
+  hosts: "{{ hosts }}"
+  gather_facts: false
+  tasks:
+    - name: Exec AWS Account to get Instance IDS
+      delegate_to: localhost
+      block:
+        - name: Get Instance IDS
+          command: >
+            aws-vault exec {{ AWS_ACCOUNT }} -- aws ec2 describe-instances --region {{ aws_region }}
+          register: instances
+
+    - name: Get Instance ID
+      set_fact:
+        instance_ids: "{{ instances.stdout | from_json | json_query('Reservations[*].Instances[?State.Name==`running`].InstanceId') | flatten }}"
+
+    - debug:
+        var: instance_ids
+
+    - name: Get Instance IDs with an instance profile
+      set_fact:
+        instance_ids_with_profile: "{{ instances.stdout | from_json | json_query('Reservations[*].Instances[?State.Name==`running` && IamInstanceProfile].InstanceId') | flatten }}"
+
+    - debug:
+        var: instance_ids_with_profile
+
+    - name: Get Instance IDs without an instance profile
+      set_fact:
+        instance_ids_without_profile: "{{ instances.stdout | from_json | json_query('Reservations[*].Instances[?State.Name==`running` && !IamInstanceProfile].InstanceId') | flatten }}"
+
+    - debug:
+        var: instance_ids_without_profile
+
+    - name: Collect Instance Profile ARNs
+      set_fact:
+        instance_arns: "{{ instance_arns | default([]) + instances.stdout | from_json | json_query(query_string) | flatten }}"
+      vars:
+        query_string: "Reservations[*].Instances[?InstanceId=='{{ item }}'].IamInstanceProfile.Arn"
+      loop: "{{ instance_ids }}"
+
+    - debug:
+        var: instance_arns
+
+    - name: Get Role name from the Instance Profile ARN
+      delegate_to: localhost
+      command: >
+        aws-vault exec {{ AWS_ACCOUNT }} -- aws iam get-instance-profile --instance-profile-name {{ item | basename | replace('.arn', '') }} --query 'InstanceProfile.Roles[*].RoleName'
+      loop: "{{ instance_arns }}"
+      when: item is not none
+      register: instance_profile_roles
+
+    - name: Extract Role Names
+      set_fact:
+        role_name: "{{ instance_profile_roles.results | json_query('[*].stdout') }}"
+
+    - name: Extract filtered role names
+      set_fact:
+        filtered_role_names: "{{ filtered_role_names | default([]) + [(item | regex_replace('\\s+|\\[\"|\"\\]', ''))] }}"
+      loop: "{{ role_name }}"
+
+    - name: Remove backslashes and double quotes from filtered_role_names
+      set_fact:
+        filtered_role_names_cleaned: "{{ filtered_role_names | map('regex_replace', '^\\[\"|\"\\]$', '') | list }}"
+
+    - debug:
+        var: filtered_role_names_cleaned
+
+    - name: Fetch Existing Policies in AWS Account
+      delegate_to: localhost
+      command: >
+        aws-vault exec {{ AWS_ACCOUNT }} -- aws iam list-policies
+      register: existing_policies
+
+    - name: Extract Policy Names
+      set_fact:
+        existing_policy_names: "{{ existing_policies.stdout | from_json | json_query('Policies[*].PolicyName') }}"
+
+    - name: Check if Existing Policies Have the Pattern
+      set_fact:
+        matched_policies: "{{ matched_policies | default([]) + [item] }}"
+      loop: "{{ existing_policy_names }}"
+      when: "item.lower().startswith('{{ NAME | lower }}-') and '{{ NAME_ENV | lower }}' in item.lower()"
+
+    - name: Check if substring random_id is present in policies
+      set_fact:
+        extracted_policies: "{{ extracted_policies | default([]) + [item] }}"
+      loop: "{{ matched_policies }}"
+      loop_control:
+        loop_var: item
+      vars:
+        get_random_id: "{{ item.split('-')[2] }}"
+      when: "get_random_id | regex_search('^(?=.*[a-zA-Z])(?=.*[0-9])[A-Za-z0-9]+$')"
+
+    - name: Check if the Filtered Policies has correct names
+      set_fact:
+        filtered_policies: "{{ filtered_policies | default([]) + [item] }}"
+      loop: "{{ extracted_policies }}"
+      when: "item.lower().endswith('iam-policy')"
+
+    - name: Extract Policy Arns for Filtered Policies
+      set_fact:
+        policy_arns: "{{ policy_arns | default([]) + existing_policies.stdout | from_json | json_query(query_string) }}"
+      vars:
+        query_string: "Policies[?PolicyName=='{{ item }}'].Arn"
+      loop: "{{ filtered_policies }}"
+
+    - debug:
+        var: policy_arns
+
+    - name: Process each role to attach policies for Instance with an Instance Profile
+      include_tasks: /tasks/attach_policies.yml
+      loop: "{{ filtered_role_names_cleaned }}"
+
+    - name: Create and attach policies to IAM roles for instances without an instance profile
+      include_tasks: /tasks/create_attach_roles.yml
+      when: instance_ids_without_profile | length > 0

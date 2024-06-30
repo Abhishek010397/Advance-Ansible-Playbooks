@@ -1,0 +1,45 @@
+---
+- name: Sync folders to S3 buckets
+  hosts: "{{ hosts }}"
+  gather_facts: yes
+  vars:
+    bucket1: "{{ S3.BUCKET1.NAME | trim }}"
+    bucket2: "{{ S3.BUCKET2.NAME | trim }}"
+    bucket3: "{{ S3.BUCKET3.NAME | trim }}"
+    bucket4: "{{ S3.BUCKET4.NAME | trim }}"
+    bucket5: "{{ S3.BUCKET5.NAME | trim }}"
+    bucket6: "{{ S3.BUCKET6.NAME | trim }}"
+    bucket7: "{{ S3.BUCKET.NAME | trim }}"
+    dir_bucket1: "{{ MOUNTPATH.BUCKET1 | trim }}"
+    dir_bucket2: "{{ MOUNTPATH.BUCKET2 | trim }}"
+    dir_bucket3: "{{ MOUNTPATH.BUCKET3 | trim }}"
+    dir_bucket4: "{{ MOUNTPATH.BUCKET4 | trim }}"
+    dir_bucket5: "{{ MOUNTPATH.BUCKET5 | trim }}"
+    dir_bucket6: "{{ MOUNTPATH.BUCKET6 | trim }}"
+    dir_bucket7: "{{ MOUNTPATH.BUCKET7 | trim | default('') }}"
+  tasks:
+    - name: Create and Copy the migration script
+      become: yes
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          aws configure set default.s3.max_concurrent_requests 5
+          aws configure set default.s3.multipart_threshold 10MB
+          aws configure set default.s3.multipart_chunksize 10MB
+          aws configure set s3.signature_version s3v4  
+          aws s3 sync {{ dir_bucket1 }} s3://{{ bucket1 }} >> ./{{ ansible_date_time.iso8601_basic }}_bucket1.log &
+          aws s3 sync {{ dir_bucket2 }} s3://{{ bucket2 }} >> ./{{ ansible_date_time.iso8601_basic }}_bucket2.log & 
+          aws s3 sync {{ dir_bucket3 }} s3://{{ bucket3 }} >> ./{{ ansible_date_time.iso8601_basic }}_bucket3.log &
+          aws s3 sync {{ dir_bucket4 }} s3://{{ bucket4 }}  >> ./{{ ansible_date_time.iso8601_basic }}_bucket4.log &
+          aws s3 sync {{ dir_bucket5 }} s3://{{ bucket5 }}  >> ./{{ ansible_date_time.iso8601_basic }}_bucket5.log &
+          aws s3 sync {{ dir_bucket6 }} s3://{{ bucket6 }} >> ./{{ ansible_date_time.iso8601_basic }}_bucket6.log &
+          {% if dir_techlog is not none and bucket7 is not none %}
+          aws s3 sync {{ dir_bucket7 }} s3://{{ bucket7 }} >> ./{{ ansible_date_time.iso8601_basic }}_bucket7.log &
+          {% endif %}
+        dest: ./data_migration.sh
+        mode: '0755'
+
+
+    - name: Execute Data Migration Script on the Target Servers
+      become: yes
+      shell: "nohup sh ./data_migration.sh > /dev/null 2>&1 &"
