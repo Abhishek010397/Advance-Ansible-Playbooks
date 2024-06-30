@@ -1,0 +1,223 @@
+---
+- hosts: "{{ hosts }}"
+  become: true
+  serial: 1
+  vars:
+    query1: "data[?name=='{{ HOST }}'].id"
+    stack1_query: "data[?kind=='stack']|[?name==`stack1-{{ version }}`].id"
+    stack2_query: "data[?kind=='stack']|[?name==`stack2-{{ version }}`].id"
+    stack3_query: "data[?kind=='stack']|[?name==`stack3-{{ version }}`].id"
+    certs_query: "data[?name=='{{ NAME }}-certificate'].name"
+  vars_files:
+    - /images.yml
+  tasks:
+    - debug:
+        msg: "{{ version }}"
+
+    - name: Environment Exists
+      block:
+        - uri:
+            method: GET
+            user: "{{ access_key }}"
+            pwd: "{{ secret_key }}"
+            url: "https://{{ host }}/v1/projects"
+            return_content: yes
+          register: projects
+        - set_fact:
+            projectid: "{{ item }}"
+          loop: "{{ projects.json | json_query(query1) }}"
+
+    - name: Get stacks
+      uri:
+        method: GET
+        user: "{{ access_key }}"
+        pwd: "{{ secret_key }}"
+        url: "https://{{ host }}/v2-beta/projects/{{projectid}}/stacks/"
+        return_content: yes
+      register: stacks
+      become: no
+
+    - name: Set ID of stack1
+      set_fact:
+        stack1_id: "{{ item }}"
+      loop: "{{ stacks.json | json_query(stack1_query) }}"
+
+    - name: Set ID of stack2
+      set_fact:
+        stack2_id: "{{ item }}"
+      loop: "{{ stacks.json | json_query(stack2_query) }}"
+
+    - name: Set ID of stack3
+      set_fact:
+        stack3_id: "{{ item }}"
+      loop: "{{ stacks.json | json_query(stack3_query) }}"
+      when: YJW is defined
+
+   
+    - name: Rename stack1
+      uri:
+        method: PUT
+        user: "{{ access_key }}"
+        pwd: "{{ secret_key }}"
+        url: "https://{{ host }}/v2-beta/projects/{{ projectid }}/stacks/{{ stack1_id }}"
+        body_format: json
+        return_content: yes
+        status_code: 200,201,202
+        headers:
+          accept: "application/json"
+        body:
+          name: "stack-{{ version }}-mountpath"
+          startOnCreate: false
+      ignore_errors: yes
+
+    - name: Rename stack2
+      uri:
+        method: PUT
+        user: "{{ access_key }}"
+        pwd: "{{ secret_key }}"
+        url: "https://{{ host }}/v2-beta/projects/{{ projectid }}/stacks/{{ stack2_id }}"
+        body_format: json
+        return_content: yes
+        status_code: 200,201,202
+        headers:
+          accept: "application/json"
+        body:
+          name: "stack2-{{ version }}-mountpath"
+          startOnCreate: false
+      ignore_errors: yes
+
+    - name: Rename stack3
+      uri:
+        method: PUT
+        user: "{{ access_key }}"
+        pwd: "{{ secret_key }}"
+        url: "https://{{ host }}/v2-beta/projects/{{ projectid }}/stacks/{{ stack3_id }}"
+        body_format: json
+        return_content: yes
+        status_code: 200,201,202
+        headers:
+          accept: "application/json"
+        body:
+          name: "stack3-{{ version }}-mountpath"
+          startOnCreate: false
+      ignore_errors: yes
+
+    - set_fact:
+        image1: "{{ item.value }}"
+      when: "'image1' in item.key"
+      with_dict: "{{ images[version] }}"
+
+    - set_fact:
+        image2: "{{ item.value }}"
+      when: "'image2' in item.key"
+      with_dict: "{{ images[version] }}"
+
+    - set_fact:
+        image3: "{{ item.value }}"
+      when: "'image3' in item.key"
+      with_dict: "{{ images[version] }}"
+
+    - set_fact:
+        image4: "{{ item.value }}"
+      when: "'image4' in item.key"
+      with_dict: "{{ images[version] }}"
+
+    - set_fact:
+        image5: "{{ item.value }}"
+      when: "'image5' in item.key"
+      with_dict: "{{ images[version] }}"
+
+    - set_fact:
+        image6: "{{ item.value }}"
+      when: "'image6' in item.key"
+      with_dict: "{{ images[version] }}"
+
+    - set_fact:
+        image7: "{{ item.value }}"
+      when: "'image7' in item.key"
+      with_dict: "{{ images[version] }}"
+
+    - set_fact:
+        image8: "{{ item.value }}"
+      when: "'image8' in item.key"
+      with_dict: "{{ images[version] }}"
+
+    - set_fact:
+        image9: "{{ item.value }}"
+      when: "'image9' in item.key"
+      with_dict: "{{ images[version] }}"
+
+    - set_fact:
+        image10: "{{ item.value }}"
+      when: "'image10' in item.key"
+      with_dict: "{{ images[version] }}"
+
+    - name: Get certs name
+      uri:
+        method: GET
+        user: "{{ access_key }}"
+        pwd: "{{ secret_key }}"
+        url: "https://{{ host }}/v1/projects/{{ projectid }}/certificates"
+        return_content: yes
+      register: certificates
+      when: NAME_ENV != "A" and NAME_ENV != "B"
+
+    - name: Set the certificate name
+      set_fact:
+        certificate_name: "{{ item }}"
+      loop: "{{ certificates.json | json_query(certs_query) }}"
+      when: NAME_ENV != "A" and NAME_ENV != "B"
+      ignore_errors: true
+
+    - name: Create new stack1
+      uri:
+        method: POST
+        user: "{{ access_key }}"
+        pwd: "{{ secret_key }}"
+        url: "https://{{ host }}/v2-beta/projects/{{ projectid }}/stacks"
+        body_format: json
+        return_content: yes
+        status_code: 201
+        headers:
+          accept: "application/json"
+        body:
+          name: "stack1-{{ version }}"
+          dockerCompose: "{{ lookup('template', '/templates/stack1dockerCompose.yml') | string}}"
+          Compose: "{{ lookup('template', '/templates/stack1Compose.yml') | string}}"
+          startOnCreate: false
+
+    - name: Create new stack2
+      uri:
+        method: POST
+        user: "{{ access_key }}"
+        pwd: "{{ secret_key }}"
+        url: "https://{{ host }}/v2-beta/projects/{{ projectid }}/stacks"
+        body_format: json
+        return_content: yes
+        status_code: 201
+        headers:
+          accept: "application/json"
+        body:
+          name: "stack2-{{ version }}"
+          dockerCompose: "{{ lookup('template', '/templates/stack2dockerCompose.yml') | string}}"
+          Compose: "{{ lookup('template', '/templates/stack2Compose.yml') | string}}"
+          startOnCreate: false
+      when: YJW is defined
+
+    - name: Create new stack2
+      uri:
+        method: POST
+        user: "{{ access_key }}"
+        pwd: "{{ secret_key }}"
+        url: "https://{{ host }}/v2-beta/projects/{{ projectid }}/stacks"
+        body_format: json
+        return_content: yes
+        status_code: 201
+        headers:
+          accept: "application/json"
+        body:
+          name: "stack3-{{ version }}"
+          dockerCompose: "{{ lookup('template', '/templates/stack3dockerCompose.yml') | string}}"
+          Compose: "{{ lookup('template', '/templates/stack3Compose.yml') | string}}"
+          startOnCreate: false
+      when: NAME_ENV != "A" and NAME_ENV != "B"
